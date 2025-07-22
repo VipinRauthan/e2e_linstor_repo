@@ -1,0 +1,94 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+
+import base64
+import sys
+import io
+
+from linstor import Resource
+from one import util, vm
+from one.datastore import Datastore
+from extender import get_rsc_name, get_current_context, is_device_open
+from __init__ import  get_resource_name
+
+SRC_HOST = sys.argv[1]
+DST_HOST = sys.argv[2]
+DST_PATH = sys.argv[3]
+VM_ID = sys.argv[4]
+DS_ID = sys.argv[5]
+
+
+def main():
+    util.log_info("Entering tm/postmigrate, from='{f}' to='{t}'".format(f=SRC_HOST, t=DST_HOST))
+
+    try:
+        template_b64_xml = sys.argv[6]
+        vmxml = base64.b64decode(template_b64_xml)
+    except (base64.binascii.Error, IndexError):
+        # since opennebula 5.10 the template XML should be provided via STDIN
+        outstr = io.BytesIO()
+        base64.decode(sys.stdin, outstr)
+        vmxml = outstr.getvalue().decode()
+
+    target_vm = vm.Vm(vmxml)
+    src_host = util.arg_host(SRC_HOST).strip()
+    dst_dir = util.arg_path(DST_PATH).strip()
+
+    for disk in target_vm.disk_ids:
+        if target_vm.tm_mad(disk) == "linstor":
+            image_datastore = Datastore(util.show_ds(target_vm.disk_datastore_id(disk)))
+            res_name = get_rsc_name(target_vm, disk)
+            res_name = get_resource_name(res_name)
+            res = Resource(name=res_name, uri=image_datastore.linstor_controllers)
+
+            if res.volumes and not is_device_open(src_host, res.volumes[0].device_path):
+                res.deactivate(src_host)
+            res.allow_two_primaries = False
+
+    # TODO delete this if-block after context transition time is over
+    if True:
+        datastore = Datastore(util.show_ds(DS_ID))
+        if datastore.tm_mad == "linstor":
+            if target_vm.has_context:
+                # deactivate context image too
+                context_id = target_vm.context_id
+                res_name = get_current_context(datastore.linstor_controllers, int(VM_ID), context_id)
+                if res_name:
+                    res = Resource(name=res_name, uri=datastore.linstor_controllers)
+                    res.deactivate(src_host)
+                    res.allow_two_primaries = False
+            else:
+                util.log_info("No CONTEXT section in VM({vm}) XML info".format(vm=VM_ID))
+    # end delete
+
+    args = ""
+    for arg in sys.argv[1:]:
+        args += ' "{}" '.format(arg)
+
+    util.migrate_other(args)
+
+    # do not delete if we are on a shared fileystem
+    util.rm_shared_safe(src_host, dst_dir)
+
+    util.log_info("Exiting tm/postmigrate")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

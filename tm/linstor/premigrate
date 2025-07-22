@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+
+import base64
+import sys
+import io
+
+from linstor import Resource
+from one import util, vm
+from one.datastore import Datastore
+from extender import get_rsc_name, get_device_path, get_current_context
+from __init__ import  get_resource_name
+
+SRC_HOST = sys.argv[1]
+DST_HOST = sys.argv[2]
+DST_PATH = sys.argv[3]
+VM_ID = int(sys.argv[4])
+DS_ID = sys.argv[5]
+
+
+def main():
+    util.log_info("Entering tm/premigrate from {s} to {t} in {tp}".format(s=SRC_HOST, t=DST_HOST, tp=DST_PATH))
+
+    try:
+        template_b64_xml = sys.argv[6]
+        vmxml = base64.b64decode(template_b64_xml)
+    except (base64.binascii.Error, IndexError):
+        # since opennebula 5.10 the template XML should be provided via STDIN
+        outstr = io.BytesIO()
+        base64.decode(sys.stdin, outstr)
+        vmxml = outstr.getvalue().decode()
+
+    target_vm = vm.Vm(vmxml)
+    dst_host = util.arg_host(DST_HOST).strip()
+    src_host = util.arg_host(SRC_HOST).strip()
+    dst_dir = util.arg_path(DST_PATH).strip()
+
+    for disk in target_vm.disk_ids:
+        if target_vm.tm_mad(disk) == "linstor":
+            image_datastore = Datastore(util.show_ds(target_vm.disk_datastore_id(disk)))
+            res_name = get_rsc_name(target_vm, disk)
+            res_name = get_resource_name(res_name)
+
+
+            res = Resource(name=res_name, uri=image_datastore.linstor_controllers)
+            res.activate(DST_HOST)
+            res.allow_two_primaries = True
+            dst_path = "{}/disk.{}".format(dst_dir, disk)
+            util.link_file(dst_host, dst_dir, dst_path, get_device_path(res), res.name)
+
+    args = ""
+    for arg in sys.argv[1:]:
+        args += ' "{}" '.format(arg)
+
+    util.migrate_other(args)
+
+    if target_vm.has_context:
+        datastore = Datastore(util.show_ds(DS_ID))
+
+        context_id = target_vm.context_id
+        context_path = "{}/disk.{}".format(dst_dir, context_id)
+        res_name = get_current_context(datastore.linstor_controllers, VM_ID, context_id)
+        res_name = get_resource_name(res_name)
+        if datastore.tm_mad != "linstor" or res_name is None:
+            # [phil] I guess this does not belong here, but I want working live
+            # migration with ssh system store.
+            # scp'ing context block device from the source to the destination machine
+            scp_command = "if test ! -e {cp}; then scp {srch}:{cp} {cp}; fi".format(srch=src_host, cp=context_path)
+            rc = util.ssh_exec_and_log(
+                host=dst_host,
+                cmd=scp_command,
+                error_msg='Error: Unable to scp {} from {} to {}'.format(context_path, src_host, dst_host))
+            if rc != 0:
+                raise RuntimeError("Error: Unable to scp {} from {} to {}".format(context_path, src_host, dst_host))
+        else:
+            # here we have for sure a linstor datastore
+            # TODO remove this else after we some minor verions, transition code for running VM's
+            if res_name:
+                res = Resource(name=res_name, uri=datastore.linstor_controllers)
+                res.activate(DST_HOST)
+                res.allow_two_primaries = True
+                util.link_file(dst_host, dst_dir, context_path, get_device_path(res), res.name)
+    else:
+        util.log_info("No CONTEXT section in VM({vm}) XML info".format(vm=VM_ID))
+
+    util.log_info("Exiting tm/premigrate")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

@@ -1,0 +1,232 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+from __future__ import print_function
+
+import os
+import sys
+
+from linstor import Resource, MultiLinstor
+from one import util, vm
+from one.datastore import Datastore
+from extender import get_rsc_name, get_device_path, deploy, delete_vm_contexts
+from extender import get_satellite_nodes, get_satellite_nodes_online
+from __init__ import  get_resource_name
+
+SRC = sys.argv[1]
+DST = sys.argv[2]
+VM_ID = int(sys.argv[3])
+DS_ID = sys.argv[4]
+
+
+def move_linstor_resource(lin, src_host, src_path, dst_host, dst_path, dst_dir, rsc_name):
+    """
+    Moves linstor resources between linstor hosts
+
+    :param MultiLinstor lin: linstor api object
+    :param str src_host: hostname of source node
+    :param str src_path: full path of src resource link
+    :param str dst_host: hostname of destination node
+    :param str dst_path: full path of resource on disk
+    :param str dst_dir: directory path of resource on disk
+    :param str rsc_name: linstor resource name
+    """
+    res = Resource(name=rsc_name, existing_client=lin)
+    util.log_info("Active resource '{r}' on destination host: {h}".format(r=rsc_name, h=dst_host))
+    res.activate(dst_host)
+    util.log_info("Deactivate resource '{r}' on source host: {h}".format(r=rsc_name, h=src_host))
+    res.deactivate(src_host)
+    try:
+        util.unlink_file(src_host, src_path)
+    except RuntimeError:
+        util.log_error("Unable to unlink file: {f} on {h}".format(f=src_path, h=src_host))
+
+    util.link_file(dst_host, dst_dir, dst_path, get_device_path(res), res.name)
+
+
+def move_none_linstor_host(linstor, src_host, src_path, dst_host, dst_path, dst_dir, rsc_name):
+    """
+    Moves linstor resources to a none satellite host (maybe undeploy called)
+
+    :param MultiLinstor linstor: linstor api object
+    :param str src_host: hostname of source node
+    :param str src_path: full path of resource on disk
+    :param str dst_host: hostname of destination node
+    :param str dst_path: full path of resource on disk
+    :param str dst_dir: directory path of resource on disk
+    :param str rsc_name: linstor resource name
+    """
+    res = Resource(name=rsc_name, existing_client=linstor)
+    diskful_nodes = res.diskful_nodes()
+
+    online_nodes = get_satellite_nodes_online(linstor, node_filter=diskful_nodes)
+    if not online_nodes:
+        raise RuntimeError("No online linstor node to copy resource {resource} from.".format(resource=rsc_name))
+    copy_from_host = src_host if src_host in online_nodes else online_nodes[0]
+    util.ssh_make_path(" ".join([dst_host, dst_dir]))
+    cmd = [
+        "set -e -o pipefail",
+        "dd if={src_path} bs=4M iflag=direct conv=sparse | ssh {dst_host} -- 'dd of={dst_path} bs=4M conv=sparse'".format(
+            src_path=get_device_path(res),
+            dst_host=dst_host,
+            dst_path=dst_path)
+    ]
+    rc, _, err = util.ssh_monitor_and_log(
+        host=copy_from_host,
+        cmd=" && ".join(cmd),
+        error_msg="dd")
+    if rc != 0:
+        raise RuntimeError("Unable to copy linstor resource from {from_host} to new host {host}: {err}"
+                           .format(from_host=copy_from_host, host=dst_host, err=err))
+
+    if src_host == copy_from_host:
+        res.delete()
+        util.unlink_file(src_host, src_path)
+    # else the resource will not be able to be deleted because original src host is offline
+    # so do not even attempt it, this will create a name collision on deploy (until manually deleted before)
+
+
+def move_from_none_linstor_host(
+        controllers, resource_group, src_host, src_path, dst_host, dst_path, dst_dir, rsc_name, disk_size_mb):
+    """
+    Moves linstor resources from a none satellite host to a linstor host (maybe deploy called)
+
+    :param str controllers: linstor controllers comma list
+    :param str resource_group: resource group name
+    :param str src_host: hostname of source node
+    :param str src_path: full path of resource on disk
+    :param str dst_host: hostname of destination node
+    :param str dst_path: full path of resource on disk
+    :param str dst_dir: directory path of resource on disk
+    :param str rsc_name: linstor resource name
+    :param int disk_size_mb: disk size in MB
+    """
+    res = deploy(controllers, rsc_name, str(disk_size_mb) + "MiB", resource_group, dst_host)
+    util.link_file(dst_host, dst_dir, dst_path, get_device_path(res), rsc_name)
+
+    util.ssh_make_path(" ".join([dst_host, dst_dir]))
+    cmd = [
+        "set -e -o pipefail",
+        "dd if={src_path} bs=4M conv=sparse | ssh {dst_host} -- 'dd of={dst_path} oflag=direct bs=4M conv=sparse'".format(
+            src_path=src_path,
+            dst_host=dst_host,
+            dst_path=dst_path),
+        "rm -Rf {src_path}".format(src_path=src_path)
+    ]
+    rc, _, err = util.ssh_monitor_and_log(
+        host=src_host,
+        cmd=" && ".join(cmd),
+        error_msg="dd")
+    if rc != 0:
+        raise RuntimeError("Unable to copy linstor resource to new host {host}: {err}".format(host=dst_host, err=err))
+
+
+def main():
+    util.log_info("Entering tm mv, from='{s}' to='{dst}'".format(s=SRC, dst=DST))
+
+    if SRC == DST:
+        util.log_info(
+            "source ({}) and destination ({}) are the same, exiting.".format(SRC, DST)
+        )
+        sys.exit(0)
+
+    src_host = util.arg_host(SRC).strip()
+    src_path = util.arg_path(SRC).strip()
+    src_dir = os.path.dirname(src_path)
+
+    dst_host = util.arg_host(DST).strip()
+    dst_path = util.arg_path(DST).strip()
+    dst_dir = str(os.path.dirname(dst_path).strip())
+
+    datastore = Datastore(util.show_ds(DS_ID))
+
+    disk_id = SRC.split(".")[-1].strip() if "disk." in SRC else None
+    target_vm = vm.Vm(util.show_vm(VM_ID))
+    src_path = get_resource_name(src_path)
+
+
+    if disk_id is None:
+        # this path is executed if used as system ds and as final mv call as the vm directory
+        util.ssh_make_path(" ".join([dst_host, dst_dir]))
+
+        # try to delete VM context images as we move to context file images
+        if True:
+            if target_vm.has_context:
+                del_result = delete_vm_contexts(datastore.linstor_controllers, VM_ID, target_vm.context_id)
+
+                for res in del_result:
+                    if del_result[res] is not None:
+                        util.log_info(str(del_result[res]))
+            else:
+                util.log_info("No CONTEXT section in VM({vm}) XML info".format(vm=VM_ID))
+        # end of context delete
+
+        # this copy command does the same as the opennebula ssh/mv
+        # the tar copy might fail if the src host is already down
+        tar_copy_cmd = " && ".join([
+            "set -e -o pipefail",
+            "tar -C {src_dir} --sparse -cf - {src_vm_dir} | ssh {dst_host} 'tar -C {dst_dir} --sparse -xf -'"
+            .format(
+                src_dir=src_dir,
+                src_vm_dir=os.path.basename(src_path),
+                dst_host=dst_host,
+                dst_dir=dst_dir
+            ),
+            "rm -Rf {src_path}".format(src_path=src_path)
+        ])
+
+        rc = util.ssh_exec_and_log(
+            host=src_host,
+            cmd=tar_copy_cmd,
+            error_msg='Unable to tar copy to new host')
+        if rc != 0:
+            util.log_error("Unable to tar copy to new host")
+    else:
+        with MultiLinstor(MultiLinstor.controller_uri_list(datastore.linstor_controllers)) as lin:
+            satellite_nodes = get_satellite_nodes(lin)
+
+            # normal drbd image
+            res_name = get_rsc_name(target_vm, disk_id)
+
+            if src_host in satellite_nodes:
+                if dst_host in satellite_nodes:
+                    move_linstor_resource(lin, src_host, src_path, dst_host, dst_path, dst_dir, res_name)
+                else:
+                    util.log_info("None Linstor dst node: " + dst_host)
+                    move_none_linstor_host(lin, src_host, src_path, dst_host, dst_path, dst_dir, res_name)
+            else:
+                if dst_host in satellite_nodes:
+                    move_from_none_linstor_host(
+                        datastore.linstor_controllers,
+                        datastore.linstor_resource_group,
+                        src_host,
+                        src_path,
+                        dst_host,
+                        dst_path,
+                        dst_dir,
+                        res_name,
+                        target_vm.disk_size(disk_id))
+                else:
+                    raise RuntimeError("Operation not supported: mv none linstor to none linstor node")
+
+    util.log_info("Exiting tm mv")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

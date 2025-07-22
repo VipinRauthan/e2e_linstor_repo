@@ -1,0 +1,127 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+from __future__ import print_function
+
+import sys
+
+from extender import get_device_path, deploy
+from one import consts, driver_action, util
+from __init__ import  IMAGE_PREFIX
+
+def main():
+    util.log_info("Entering datastore cp")
+
+    arg_driver_action, arg_image_id = util.get_datastore_args()
+    driver = driver_action.DriverAction(arg_driver_action)
+    resource_name = "{}-{}".format(IMAGE_PREFIX, arg_image_id)
+
+    res = deploy(
+        linstor_controllers=driver.datastore.linstor_controllers,
+        resource_name=resource_name,
+        vlm_size_str=driver.image.size + "MiB",
+        resource_group=driver.datastore.linstor_resource_group
+    )
+
+    util.set_up_datastore(
+        " ".join(
+            [
+                driver.datastore.base_path,
+                driver.datastore.restricted_dirs,
+                driver.datastore.safe_dirs,
+            ]
+        )
+    )
+
+    downloader_args = util.set_downloader_args(
+        " ".join(
+            [
+                driver.image.md5,
+                driver.image.sha1,
+                driver.image.no_decompress,
+                driver.image.limit_transfer_bw,
+                driver.image.path,
+                "-",
+            ]
+        )
+    )
+
+    copy_command = util.get_copy_command(downloader_args).strip()
+
+    if driver.image.path.startswith("http"):
+        util.log_info(
+            "Downloading {} to the image repository".format(driver.image.path)
+        )
+
+        if int(util.check_restricted(driver.image.path)) == 1:
+            util.log_error(
+                "Not allowed to copy images from {}".format(
+                    driver.datastore.restricted_dirs
+                )
+            )
+            util.log_error(
+                "Not allowed to copy image file {}".format(driver.image.path)
+            )
+
+            res.delete()
+
+        util.log_info(
+            "Copying local image {} to the image repository".format(driver.image.path)
+        )
+
+    hosts = res.diskful_nodes()
+    dest_node = hosts[0]
+
+    conv_opts = []
+    if res.is_thin():
+        conv_opts.append("sparse")
+
+    device_path = get_device_path(res)
+    command = [
+        copy_command,
+        "|",
+        "ssh",
+        dest_node,
+        "dd",
+        "of={}".format(device_path),
+        "bs=2M",
+        "oflag=direct"
+    ]
+
+    if conv_opts:
+        command.append("conv=" + ",".join(conv_opts))
+
+    rc = util.exec_and_log(
+        " ".join(command),
+        '"{}"'.format("Error copying data to {} on {}".format(res.name, dest_node)),
+    )
+
+    if int(rc) != 0:
+        res.delete()
+        sys.exit(1)
+
+    qemu_format = util.detect_image_format(dest_node, device_path)
+
+    util.log_info("Exiting datastore cp")
+
+    print(res.name, qemu_format)
+
+
+if __name__ == "__main__":
+    util.run_main(main)

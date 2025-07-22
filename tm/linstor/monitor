@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+
+from __future__ import print_function
+
+import linstor
+from extender import calculate_space
+from one import driver_action, util
+
+
+def main():
+    arg_driver_action, arg_image_id = util.get_datastore_args(expected_arg_count=1)
+    driver = driver_action.DriverAction(arg_driver_action)
+    util.log_info("Entering tm monitor[{n}]".format(n=driver.datastore.name))
+
+    with linstor.MultiLinstor(linstor.MultiLinstor.controller_uri_list(driver.datastore.linstor_controllers)) as lin:
+        rsc_grp_name = driver.datastore.linstor_resource_group
+        rsc_grp_resp = lin.resource_group_list_raise(filter_by_resource_groups=[rsc_grp_name])
+        rsc_grp_data = rsc_grp_resp.resource_groups[0]
+        storage_pool = rsc_grp_data.select_filter.storage_pool_list
+        auto_place_count = rsc_grp_data.select_filter.place_count if rsc_grp_data.select_filter.place_count else 2
+
+        stor_pool_used, stor_pool_total, stor_pool_free = calculate_space(
+            lin,
+            storage_pool,
+            auto_place_count
+        )
+
+        print(
+            "USED_MB={}\nTOTAL_MB={}\nFREE_MB={}".format(
+                stor_pool_used,
+                stor_pool_total,
+                stor_pool_free,
+            )
+        )
+
+    util.log_info("Exiting tm monitor[{n}/{u}/{t}/{f}].".format(
+        n=driver.datastore.name, u=stor_pool_used, t=stor_pool_total, f=stor_pool_free)
+    )
+
+
+if __name__ == "__main__":
+    util.run_main(main)

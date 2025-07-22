@@ -1,0 +1,87 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+from __future__ import print_function
+
+import os
+import sys
+import re
+
+from extender import clone, get_device_path, resize_disk, resize_if_qcow2, wait_resource_ready
+from linstor import Resource, SizeCalc
+from one import util
+from one.datastore import Datastore
+from one.vm import Vm
+from __init__ import  VM_NAME_FORMAT, get_resource_name
+
+SRC = sys.argv[1]
+DST = sys.argv[2]
+VM_ID = int(sys.argv[3])
+DS_ID = sys.argv[4]
+
+
+def main():
+    util.log_info("Entering tm clone src:{s} dst:{d}".format(s=SRC, d=DST))
+
+    src_path = util.arg_path(SRC).strip()
+    dst_host = util.arg_host(DST).strip()
+    dst_path = util.arg_path(DST).strip()
+    dst_dir = os.path.dirname(dst_path).strip()
+    disk_id = dst_path.split(".")[-1].strip()
+
+    datastore = Datastore(util.show_ds(DS_ID))
+    vm = Vm(util.show_vm(VM_ID))
+    src_path = get_resource_name(src_path)
+
+    res = Resource(name=src_path, uri=datastore.linstor_controllers)
+
+    new_size = vm.disk_size(disk_id) \
+        if vm.disk_size(disk_id) > SizeCalc.convert(res.volumes[0].size, SizeCalc.UNIT_B, SizeCalc.UNIT_MiB) else None
+
+    clone_name = VM_NAME_FORMAT.format(vm_id=VM_ID, disk_id=disk_id)
+    success, used_linstor_clone = clone(
+        res,
+        clone_name,
+        datastore.linstor_resource_group,
+        prefer_node=dst_host,
+        new_size=new_size,
+        allow_dependent_clone=True
+    )
+    if not success:
+        util.log_error("Cloning resource {} failed.".format(res.name))
+        sys.exit(1)
+
+    res_clone = Resource(clone_name, uri=datastore.linstor_controllers)
+
+    res_clone.activate(dst_host)
+
+    util.link_file(dst_host, dst_dir, dst_path, get_device_path(res_clone), res_clone.name)
+
+    if new_size:  # we need to resize
+        wait_resource_ready(res_clone)
+        if used_linstor_clone:
+            resize_disk(res_clone, vm, disk_id, new_size)
+        else:
+            resize_if_qcow2(res_clone, vm, disk_id, new_size)
+
+    util.log_info("Exiting tm clone")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

@@ -1,0 +1,84 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+from __future__ import print_function
+
+import sys
+from one import util, vm
+from one.datastore import Datastore
+from extender import delete, get_rsc_name, delete_vm_contexts, is_device_open
+from linstor import Resource, LinstorError
+from __init__ import  get_resource_name
+
+DST = sys.argv[1]
+VM_ID = int(sys.argv[2])
+DS_ID = sys.argv[3]
+
+
+def main():
+    util.log_info("Entering tm delete, dst='{dst}'".format(dst=DST))
+
+    datastore = Datastore(util.show_ds(DS_ID))
+
+    dst_host = util.arg_host(DST).strip()
+    dst_path = util.arg_path(DST).strip()
+
+    path_split = dst_path.split(".")
+    disk_id = None
+    if len(path_split) > 1:
+        disk_id = dst_path.split(".")[-1].strip()
+
+    util.unlink_file(dst_host, dst_path)
+
+    target_vm = vm.Vm(util.show_vm(VM_ID))
+
+    # disk_id is None if the vm folder is deleted, usually the last action of a VM delete
+
+    if disk_id is not None:
+        res_name = get_rsc_name(target_vm, disk_id)
+        res_name = get_resource_name(res_name)
+
+        res = Resource(name=res_name, uri=datastore.linstor_controllers)
+        if res.volumes and not is_device_open(dst_host, res.volumes[0].device_path):
+            # CDROM devices are shared between multiple vm's with a read-only open
+            # we can't delete them as long as not all openers are closed
+            res.deactivate(dst_host)
+
+        if not (
+            target_vm.disk_persistent(disk_id) or target_vm.disk_type(disk_id) == "CDROM"
+        ):
+            try:
+                delete(res_name, datastore.linstor_controllers)
+            except LinstorError as le:
+                util.log_info(str(le))
+    else:
+        if target_vm.has_context:
+            del_result = delete_vm_contexts(datastore.linstor_controllers, VM_ID, target_vm.context_id)
+
+            for res in del_result:
+                if del_result[res] is not None:
+                    util.log_info(str(del_result[res]))
+        else:
+            util.log_info("No CONTEXT section in VM({vm}) XML info".format(vm=VM_ID))
+
+    util.log_info("Exiting tm delete")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

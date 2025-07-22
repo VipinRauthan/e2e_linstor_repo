@@ -1,0 +1,70 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+
+import sys
+
+from extender import clone, delete, get_storage_pool_names
+from linstor import Resource, MultiLinstor
+from one import consts, driver_action, util
+from __init__ import SNAP_PREFIX
+
+def main():
+    util.log_info("Entering datastore/snap_flatten")
+
+    arg_driver_action, arg_image_id = util.get_datastore_args()
+    driver = driver_action.DriverAction(arg_driver_action)
+
+    with MultiLinstor(MultiLinstor.controller_uri_list(driver.datastore.linstor_controllers)) as lin:
+        storage_pool_names = get_storage_pool_names(lin, driver.datastore)
+        stor_pool_resp = lin.storage_pool_list_raise(filter_by_stor_pools=storage_pool_names)
+
+        for stor_pool in stor_pool_resp.storage_pools:
+            if stor_pool.provider_kind.startswith("ZFS"):
+                util.log_error("Cannot flatten snapshots with ZFS storage pool")
+                sys.exit(2)
+
+    tmp_res_name = driver.image.source + "-flatten"
+    snapshot_name = "{}-{}".format(SNAP_PREFIX, driver.image.target_snap)
+    res = Resource(name=driver.image.source, uri=driver.datastore.linstor_controllers)
+    util.log_info("Creating temporary resource '{rt}' from selected snapshot '{s}'".format(
+        rt=tmp_res_name,
+        s=snapshot_name
+    ))
+    tmp_res = res.restore_from_snapshot(snapshot_name, tmp_res_name)
+
+    try:
+        delete(driver.image.source, driver.datastore.linstor_controllers)
+        util.log_info("Restore flattened resource '{r}' from temporary resource '{rt}'".format(
+            r=res.name, rt=tmp_res.name)
+        )
+        clone(
+            tmp_res,
+            driver.image.source,
+            driver.datastore.linstor_resource_group
+        )
+    finally:
+        util.log_info("Deleting temporary resource '{r}'".format(r=tmp_res.name))
+        tmp_res.delete()
+
+    util.log_info("Exiting datastore/snap_flatten")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

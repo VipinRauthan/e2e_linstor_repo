@@ -1,0 +1,59 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+OpenNebula Driver for Linstor
+Copyright 2018 LINBIT USA LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+from __future__ import print_function
+
+import sys
+
+from linstor import Resource
+from one import util, vm, extender
+from one.datastore import Datastore
+from __init__ import  get_resource_name
+
+SRC = sys.argv[1]
+DST = sys.argv[2]
+VM_ID = int(sys.argv[3])
+DS_ID = sys.argv[4]
+
+
+def main():
+    util.log_info("Entering tm mvds")
+
+    src_host = util.arg_host(SRC).strip()
+    src_path = util.arg_path(SRC).strip()
+    disk_id = SRC.split(".")[-1].strip()
+    src_path = get_resource_name(src_path)
+
+    datastore = Datastore(util.show_ds(DS_ID))
+
+    util.unlink_file(src_host, src_path)
+
+    target_vm = vm.Vm(util.show_vm(VM_ID))
+
+    res_name = extender.get_rsc_name(target_vm, disk_id)
+    res_name = get_resource_name(res_name)
+    res = Resource(name=res_name, uri=datastore.linstor_controllers)
+
+    res.deactivate(src_host)
+
+    util.log_info("Exiting tm mvds")
+
+
+if __name__ == "__main__":
+    util.run_main(main)

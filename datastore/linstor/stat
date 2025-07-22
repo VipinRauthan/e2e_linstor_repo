@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+
+FS_STAT_LOCATION="/var/lib/one/remotes/datastore/fs/stat"
+
+# forward to opennebula fs stat command
+$FS_STAT_LOCATION $@
