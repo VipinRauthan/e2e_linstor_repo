@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 
 ORIG_LOCATION="/var/lib/one/remotes/tm/shared/$(basename $0)"
 

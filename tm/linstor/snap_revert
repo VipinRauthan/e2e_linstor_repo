@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 OpenNebula Driver for Linstor
@@ -21,11 +21,11 @@ Can be triggered by using a OS image type using the qcow2 driver.
 
 
 import sys
-import re
+
 from linstor import Resource
 from one import util, vm, consts
 from one.datastore import Datastore
-from __init__ import  VM_NAME_FORMAT, SNAP_PREFIX, get_resource_name
+
 
 SRC = sys.argv[1]
 SNAP_ID = sys.argv[2]
@@ -44,14 +44,11 @@ def main():
     target_vm = vm.Vm(util.show_vm(VM_ID))
 
     res_name = target_vm.disk_source(disk_id)
-    res_name = get_resource_name(res_name)
     if target_vm.disk_persistent(disk_id) != "YES":
-        # res_name = "{}-vm{}-disk{}".format(res_name, VM_ID, disk_id)
-        res_name = VM_NAME_FORMAT.format(vm_id=VM_ID, disk_id=disk_id)
-        
+        res_name = "{}-vm{}-disk{}".format(res_name, VM_ID, disk_id)
 
     res = Resource(name=res_name, uri=datastore.linstor_controllers)
-    res.snapshot_rollback("{}-{}".format(SNAP_PREFIX, snap_id))
+    res.snapshot_rollback("{}-{}".format(consts.SNAP_PREFIX, snap_id))
 
     util.log_info("Exiting tm/snap_revert")
 

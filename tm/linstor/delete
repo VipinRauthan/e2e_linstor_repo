@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 OpenNebula Driver for Linstor
@@ -20,11 +20,11 @@ limitations under the License.
 from __future__ import print_function
 
 import sys
+
 from one import util, vm
 from one.datastore import Datastore
-from extender import delete, get_rsc_name, delete_vm_contexts, is_device_open
+from one.extender import delete, get_rsc_name, delete_vm_contexts, is_device_open
 from linstor import Resource, LinstorError
-from __init__ import  get_resource_name
 
 DST = sys.argv[1]
 VM_ID = int(sys.argv[2])
@@ -52,7 +52,6 @@ def main():
 
     if disk_id is not None:
         res_name = get_rsc_name(target_vm, disk_id)
-        res_name = get_resource_name(res_name)
 
         res = Resource(name=res_name, uri=datastore.linstor_controllers)
         if res.volumes and not is_device_open(dst_host, res.volumes[0].device_path):

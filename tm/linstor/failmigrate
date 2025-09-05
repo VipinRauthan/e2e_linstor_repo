@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 SRC_HOST=$1
 DST_HOST=$2

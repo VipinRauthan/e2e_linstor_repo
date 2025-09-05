@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 OpenNebula Driver for Linstor
@@ -24,7 +24,6 @@ import sys
 from linstor import Resource
 from one import util, vm, extender
 from one.datastore import Datastore
-from __init__ import  get_resource_name
 
 SRC = sys.argv[1]
 DST = sys.argv[2]
@@ -38,7 +37,6 @@ def main():
     src_host = util.arg_host(SRC).strip()
     src_path = util.arg_path(SRC).strip()
     disk_id = SRC.split(".")[-1].strip()
-    src_path = get_resource_name(src_path)
 
     datastore = Datastore(util.show_ds(DS_ID))
 
@@ -47,7 +45,6 @@ def main():
     target_vm = vm.Vm(util.show_vm(VM_ID))
 
     res_name = extender.get_rsc_name(target_vm, disk_id)
-    res_name = get_resource_name(res_name)
     res = Resource(name=res_name, uri=datastore.linstor_controllers)
 
     res.deactivate(src_host)
