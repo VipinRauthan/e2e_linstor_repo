@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 OpenNebula Driver for Linstor
@@ -25,8 +25,7 @@ import io
 from linstor import Resource
 from one import util, vm
 from one.datastore import Datastore
-from extender import get_rsc_name, get_current_context, is_device_open
-from __init__ import  get_resource_name
+from one.extender import get_rsc_name, get_current_context, is_device_open
 
 SRC_HOST = sys.argv[1]
 DST_HOST = sys.argv[2]
@@ -55,7 +54,6 @@ def main():
         if target_vm.tm_mad(disk) == "linstor":
             image_datastore = Datastore(util.show_ds(target_vm.disk_datastore_id(disk)))
             res_name = get_rsc_name(target_vm, disk)
-            res_name = get_resource_name(res_name)
             res = Resource(name=res_name, uri=image_datastore.linstor_controllers)
 
             if res.volumes and not is_device_open(src_host, res.volumes[0].device_path):

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 OpenNebula Driver for Linstor
@@ -24,7 +24,7 @@ import os
 
 from one import util, consts
 from one.datastore import Datastore
-from extender import deploy, get_device_path
+from one.extender import deploy, get_device_path
 from linstor import SizeCalc
 
 SIZE = sys.argv[1]
@@ -45,7 +45,7 @@ def main():
 
     datastore = Datastore(util.show_ds(DS_ID))
 
-    res_name = consts.VOLATILE_PREFIX + "-vm-{vm_id}-disk-{disk_id}".format(vm_id=VM_ID, disk_id=disk_id)
+    res_name = consts.VOLATILE_PREFIX + "-vm{vm_id}-disk{disk_id}".format(vm_id=VM_ID, disk_id=disk_id)
 
     resource = deploy(
         linstor_controllers=datastore.linstor_controllers,
