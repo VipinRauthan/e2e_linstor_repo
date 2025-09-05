@@ -140,7 +140,7 @@ def delete_vm_contexts(uri_list, vm_id, disk_id):
         if rsc_dfn_list_resp:
             rsc_dfn_list = rsc_dfn_list_resp[0]  # type: ResourceDefinitionResponse
             delete_list = [x.name for x in rsc_dfn_list.resource_definitions
-                           if x.name.startswith(consts.CONTEXT_PREFIX + "-vm-{vm_id}-disk-{disk_id}"
+                           if x.name.startswith("one"+ "-vm-{vm_id}-disk-{disk_id}"
                                                                         .format(vm_id=vm_id, disk_id=disk_id))]
             for rsc_name in delete_list:
                 try:
@@ -301,7 +301,7 @@ def get_current_context_id(uri_list, vm_id, disk_id):
         rsc_dfn_list_resp = lin.resource_dfn_list(query_volume_definitions=False)
         if rsc_dfn_list_resp:
             rsc_dfn_list = rsc_dfn_list_resp[0]  # type: ResourceDefinitionResponse
-            prefix = consts.CONTEXT_PREFIX + "-vm-{vm_id}-disk-{disk_id}".format(vm_id=vm_id, disk_id=disk_id)
+            prefix = "one"+ "-vm-{vm_id}-disk-{disk_id}".format(vm_id=vm_id, disk_id=disk_id)
             contexts = [x.name for x in rsc_dfn_list.resource_definitions
                         if x.name.startswith(prefix)]
             index_dict = {}
@@ -330,8 +330,8 @@ def get_current_context(uri_list, vm_id, disk_id):
     if c_id is None:
         return None
     elif c_id == 0:
-        return consts.CONTEXT_PREFIX + "-vm-{vm_id}-disk-{disk_id}".format(vm_id=vm_id, disk_id=disk_id)
-    return consts.CONTEXT_PREFIX + "-vm-{vm_id}-disk-{disk_id}-{cid}".format(vm_id=vm_id, disk_id=disk_id, cid=c_id)
+        return "one"+ "-vm-{vm_id}-disk-{disk_id}".format(vm_id=vm_id, disk_id=disk_id)
+    return "one"+ "-vm-{vm_id}-disk-{disk_id}-{cid}".format(vm_id=vm_id, disk_id=disk_id, cid=c_id)
 
 
 def get_device_path(res):
